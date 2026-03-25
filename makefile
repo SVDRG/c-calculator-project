@@ -23,6 +23,7 @@ $(TEST_TARGET): $(TEST_SRCS)
 run: $(TARGET)
 	./$(TARGET)
 
+# [수정된 부분] 조건을 타겟 밖으로 뺌
 ifeq ($(OS),Windows_NT)
 clean:
 	del /Q $(TARGET).exe $(TEST_TARGET).exe 2>nul
