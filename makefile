@@ -28,7 +28,7 @@ clean:
 	del /Q $(TARGET).exe $(TEST_TARGET).exe 2>nul
 else
 clean:
-    rm -f $(TARGET) $(TEST_TARGET) $(TARGET).exe $(TEST_TARGET).exe
+	rm -f $(TARGET) $(TEST_TARGET) $(TARGET).exe $(TEST_TARGET).exe
 endif
 
 re: clean all
