@@ -12,15 +12,25 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/c-calculator-project
+  # 원본 이미지 경로 (대문자 포함 가능)
+  IMAGE_BASE: ghcr.io/${{ github.repository_owner }}/c-calculator-project
   DEPLOY_PATH: C:\deploy\c-calculator-project
 
 jobs:
   build-test-publish:
     name: Build, Test, Publish
     runs-on: ubuntu-latest
-
+    outputs:
+      image_lower: ${{ steps.prep.outputs.image_lower }}
     steps:
+      - name: Prepare Lowercase Image Name
+        id: prep
+        run: |
+          # 이미지 이름을 소문자로 변환하여 환경 변수와 Output에 저장
+          IMAGE_LOWER=$(echo "${{ env.IMAGE_BASE }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_LOWER=$IMAGE_LOWER" >> $GITHUB_ENV
+          echo "image_lower=$IMAGE_LOWER" >> $GITHUB_OUTPUT
+
       - name: Checkout source
         uses: actions/checkout@v4
 
@@ -39,14 +49,15 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.GHCR_USER }}
-          password: ${{ secrets.GHCR_PAT }}
+          # github.actor와 GITHUB_TOKEN을 사용하면 별도 Secret 설정 없이도 패키지 권한이 작동합니다.
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ env.IMAGE_LOWER }}
           tags: |
             type=raw,value=latest
             type=sha
@@ -63,6 +74,9 @@ jobs:
     name: Deploy on Windows self-hosted runner
     needs: build-test-publish
     runs-on: [self-hosted, Windows, X64]
+    env:
+      # 이전 Job에서 넘겨준 소문자 이미지 이름을 환경 변수로 등록
+      IMAGE_NAME_LOWER: ${{ needs.build-test-publish.outputs.image_lower }}
 
     steps:
       - name: Show runner info
@@ -83,16 +97,9 @@ jobs:
       - name: Log in to GHCR on deployment server
         shell: pwsh
         run: |
-          $pat = "${{ secrets.GHCR_PAT }}"
-          $user = "${{ secrets.GHCR_USER }}"
-
-          if ([string]::IsNullOrWhiteSpace($pat)) {
-            throw "GHCR_PAT secret is empty or missing."
-          }
-
-          if ([string]::IsNullOrWhiteSpace($user)) {
-            throw "GHCR_USER secret is empty or missing."
-          }
+          # 여기서도 github.actor와 GITHUB_TOKEN을 사용하거나 기존 Secret을 사용하세요.
+          $pat = "${{ secrets.GITHUB_TOKEN }}"
+          $user = "${{ github.actor }}"
 
           $pat | docker login ghcr.io -u $user --password-stdin
 
@@ -100,7 +107,9 @@ jobs:
         shell: pwsh
         run: |
           $deployPath = "${{ env.DEPLOY_PATH }}"
-          New-Item -ItemType Directory -Force -Path $deployPath | Out-Null
+          if (!(Test-Path $deployPath)) {
+            New-Item -ItemType Directory -Force -Path $deployPath | Out-Null
+          }
           Write-Host "Deployment path: $deployPath"
 
       - name: Create docker-compose.yml
@@ -109,17 +118,18 @@ jobs:
           $deployPath = "${{ env.DEPLOY_PATH }}"
           $composeFile = Join-Path $deployPath "docker-compose.yml"
 
+          # 이미지 이름을 반드시 소문자 변수(${{ env.IMAGE_NAME_LOWER }})로 생성
           @"
           services:
             c-calculator:
-              image: ${{ env.IMAGE_NAME }}:latest
+              image: ${{ env.IMAGE_NAME_LOWER }}:latest
               container_name: c-calculator-prod
               stdin_open: true
               tty: true
               restart: unless-stopped
           "@ | Set-Content -Path $composeFile -Encoding UTF8
 
-          Write-Host "docker-compose.yml created:"
+          Write-Host "docker-compose.yml created with lowercase image name:"
           Get-Content $composeFile
 
       - name: Pull latest image
@@ -127,6 +137,7 @@ jobs:
         run: |
           $deployPath = "${{ env.DEPLOY_PATH }}"
           Set-Location $deployPath
+          # 변환된 이미지 이름이 포함된 docker-compose.yml을 사용하여 pull 수행
           docker compose pull
 
       - name: Deploy container
@@ -142,6 +153,8 @@ jobs:
           $deployPath = "${{ env.DEPLOY_PATH }}"
           Set-Location $deployPath
           docker compose ps
+          # 이미지 검색 시에도 소문자 이름으로 검색
           docker images | Select-String "c-calculator-project"
           docker logs c-calculator-prod --tail 50
+
 
